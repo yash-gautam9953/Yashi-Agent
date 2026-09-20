@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+config/auth.local.json
+.env
+.env.*

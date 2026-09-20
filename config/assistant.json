@@ -1,0 +1,14 @@
+{
+  "media_roots": ["."],
+  "media_extensions": [
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v"
+  ],
+  "max_media_results": 200
+}

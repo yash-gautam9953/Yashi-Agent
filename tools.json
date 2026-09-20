@@ -1,0 +1,477 @@
+[
+  {
+    "type": "function",
+    "name": "read_file",
+    "description": "Read a text file from the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Relative path of the file to read"
+        }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "search_files",
+    "description": "Search for files and directories inside the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "A pathlib glob pattern such as *.py or test*"
+        },
+        "directory": {
+          "type": "string",
+          "description": "Relative directory to search from; defaults to ."
+        }
+      },
+      "required": ["pattern"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_directory",
+    "description": "List files and directories inside the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string",
+          "description": "Relative directory path; defaults to ."
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "file_metadata",
+    "description": "Get safe metadata for a workspace file or directory.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Relative file or directory path"
+        }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "search_media",
+    "description": "Find configured movie and video files without reading their contents.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string",
+          "description": "Configured media directory; defaults to ."
+        },
+        "name_pattern": {
+          "type": "string",
+          "description": "File name glob such as * or *python*"
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_drives",
+    "description": "List available drives without reading their contents.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_location",
+    "description": "List a folder path; locations outside the workspace require approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "Absolute path such as Y:\\ or a workspace-relative path"
+        }
+      },
+      "required": ["location"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "read_external_file",
+    "description": "Read a text file by path; outside-workspace reads require approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Absolute path or workspace-relative text file path"
+        }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "create_file",
+    "description": "Create a text file inside the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Relative path of the new file"
+        },
+        "content": {
+          "type": "string",
+          "description": "Complete contents of the new file"
+        }
+      },
+      "required": ["file_path", "content"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "delete_file",
+    "description": "Delete one workspace file after explicit user approval. Directories are not allowed.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Relative path of the exact file to delete"
+        }
+      },
+      "required": ["file_path"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "rename_file",
+    "description": "Rename a file or directory inside the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Relative current path"
+        },
+        "destination": {
+          "type": "string",
+          "description": "Relative new path"
+        }
+      },
+      "required": ["source", "destination"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "create_directory",
+    "description": "Create a directory inside the workspace.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string",
+          "description": "Relative path of the directory to create"
+        }
+      },
+      "required": ["directory"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_status",
+    "description": "Show the current Git status for the workspace repository.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_diff",
+    "description": "Show Git changes in the workspace repository.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cached": {
+          "type": "boolean",
+          "description": "Show staged changes when true"
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_log",
+    "description": "Show recent commits from the workspace repository.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Number of commits to show, from 1 to 50"
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_branch",
+    "description": "List local branches in the workspace repository.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_create_branch",
+    "description": "Create a local Git branch after user approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "New local branch name"
+        }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_commit",
+    "description": "Commit already staged changes after explicit user approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Single-line commit message"
+        }
+      },
+      "required": ["message"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_push",
+    "description": "Push commits to a Git remote after explicit user approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "remote": {
+          "type": "string",
+          "description": "Remote name, usually origin"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Optional branch name"
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_pull",
+    "description": "Pull remote changes with fast-forward-only behavior after approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "remote": {
+          "type": "string",
+          "description": "Remote name, usually origin"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Optional branch name"
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "name": "git_checkout",
+    "description": "Switch the workspace to an existing Git branch after approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Existing branch name to checkout"
+        }
+      },
+      "required": ["branch"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "edit_file",
+    "description": "Replace the complete contents of a workspace text file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Relative path of the file to edit"
+        },
+        "content": {
+          "type": "string",
+          "description": "The complete new file contents"
+        }
+      },
+      "required": ["file_path", "content"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "request_new_tool",
+    "description": "Create a human-reviewable proposal for a missing capability. The proposal is not activated automatically.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Lowercase snake_case name for the proposed tool"
+        },
+        "capability": {
+          "type": "string",
+          "description": "What the new tool should do"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why the current task needs this capability"
+        },
+        "risk_level": {
+          "type": "string",
+          "enum": ["safe", "approval", "blocked", "unknown"],
+          "description": "Initial risk classification"
+        },
+        "suggested_inputs": {
+          "type": "string",
+          "description": "Expected tool inputs and constraints"
+        }
+      },
+      "required": ["name", "capability", "reason"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "create_workflow",
+    "description": "Create an approved reusable workflow composed only of existing tools.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Lowercase snake_case workflow name"
+        },
+        "description": {
+          "type": "string",
+          "description": "What this reusable workflow does"
+        },
+        "steps": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string",
+                "description": "Name of an existing registered tool"
+              },
+              "arguments": {
+                "type": "object",
+                "description": "Arguments for the selected tool"
+              }
+            },
+            "required": ["tool"]
+          }
+        }
+      },
+      "required": ["name", "description", "steps"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "run_workflow",
+    "description": "Run an approved reusable workflow by name.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of an existing workflow"
+        }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "run_command",
+    "description": "Run a command in the workspace and return its output.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Command to run in the workspace"
+        }
+      },
+      "required": ["command"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "create_and_register_tool",
+    "description": "Create, test, validate, and hot-register a new custom Python tool into the agent runtime when a required capability is missing. Once registered, the tool is immediately active and callable in the current session.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Lowercase snake_case name for the tool function, e.g. calculate_sha256"
+        },
+        "description": {
+          "type": "string",
+          "description": "Clear description of what the tool does and how the LLM should use it"
+        },
+        "parameters": {
+          "type": "object",
+          "description": "OpenAI JSON schema object defining the tool arguments (e.g. properties, required)"
+        },
+        "code": {
+          "type": "string",
+          "description": "Complete Python source code for the tool file, containing a function with the same name"
+        },
+        "test_code": {
+          "type": "string",
+          "description": "Optional Python test/assertion code to verify that the tool function runs correctly before registering"
+        }
+      },
+      "required": ["name", "description", "parameters", "code"]
+    }
+  },
+  {
+    "type": "function",
+    "name": "reload_tools",
+    "description": "Reload and refresh all custom tools from disk into the running agent session.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+]
