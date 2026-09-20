@@ -2,6 +2,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 from functools import partial
 from pathlib import Path
 from openai import OpenAI
@@ -37,6 +38,11 @@ from tools.git import (
 )
 from tools.tool_builder import request_new_tool
 from tools.workflows import create_workflow, run_workflow
+from tools.custom_tool_manager import (
+    create_and_register_tool,
+    load_custom_tools,
+    reload_tools,
+)
 from ui.console import console
 
 
@@ -63,6 +69,8 @@ client = OpenAI(
 # -------------------------
 
 WORKSPACE = Path(__file__).parent.resolve()
+if str(WORKSPACE) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE))
 MAX_TOOL_ROUNDS = 12
 MAX_COMMAND_OUTPUT = 12000
 SAFE_COMMANDS = {
@@ -159,6 +167,16 @@ base_tool_functions = {
     "run_command": run_command
 }
 
+def dynamic_register(name, schema, func):
+    tool_functions[name] = func
+    for idx, existing_tool in enumerate(tools):
+        if existing_tool.get("name") == name:
+            tools[idx] = schema
+            break
+    else:
+        tools.append(schema)
+
+
 tool_functions = dict(base_tool_functions)
 tool_functions.update({
     "create_workflow": partial(
@@ -172,7 +190,23 @@ tool_functions.update({
         WORKSPACE,
         base_tool_functions,
     ),
+    "create_and_register_tool": partial(
+        create_and_register_tool,
+        WORKSPACE,
+        approve,
+        dynamic_register,
+        set(base_tool_functions),
+    ),
+    "reload_tools": partial(
+        reload_tools,
+        WORKSPACE,
+        tool_functions,
+        tools,
+    ),
 })
+
+# Load persisted custom tools on startup
+load_custom_tools(WORKSPACE, tool_functions, tools)
 
 AGENT_INSTRUCTIONS = (
     "Answer the user clearly. "
@@ -181,8 +215,9 @@ AGENT_INSTRUCTIONS = (
     "Never access secrets or files outside the workspace. "
     "For computer navigation, use list_drives, list_location, and "
     "read_external_file; external reads require approval. "
-    "If a required capability is unavailable, use request_new_tool "
-    "to create a reviewable proposal; never invent or execute an unregistered tool."
+    "If a required capability is unavailable, use create_and_register_tool "
+    "to write, test, and dynamically register the tool into the runtime. "
+    "Once registered, call the new tool in your next step to complete the task."
 )
 
 

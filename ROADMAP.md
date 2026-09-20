@@ -2,14 +2,15 @@
 
 ## Current architecture
 
-- `main.py`: Azure Responses API client and bounded multi-tool loop.
-- `tools/`: filesystem and dedicated Git tools.
+- `main.py`: Azure Responses API client, dynamic tool registry, and bounded multi-tool loop.
+- `tools/`: filesystem, Git, workflow, and custom tool management.
+- `custom_tools/`: dynamic agent-generated and user-approved tools.
 - `security/`: workspace path policy and secret redaction.
-- `config/auth.json`: provider settings and environment-variable references; no secrets.
+- `config/`: provider settings (`auth.json`), media settings (`assistant.json`), and dynamic tool registry (`custom_tools.json`).
 - `tools.json`: LLM tool schemas.
 - `tests/`: standard-library unit tests that do not call the LLM.
 
-## Phase 1: Filesystem, terminal, and Git
+## Phase 1: Filesystem, terminal, Git, and dynamic tools
 
 Status: implemented and validated.
 
@@ -17,6 +18,7 @@ Status: implemented and validated.
 - Controlled command execution with shell operators blocked, approvals for risky commands, timeout, and output limits.
 - Dedicated Git status, diff, log, branch listing, branch creation, commit, push, pull, and checkout tools.
 - Read-only Git operations run automatically; state-changing operations require approval.
+- Dynamic tool creation (`create_and_register_tool`) and hot-reloading (`reload_tools`) with syntax verification, isolated test validation, interactive human approval, and persistent storage.
 - Focused security and behavior tests.
 
 ## Phase 2: Browser, web research, and downloads
