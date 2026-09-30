@@ -38,16 +38,18 @@ class Console:
         return text if len(text) <= limit else text[:limit - 3] + "..."
 
     def banner(self):
-        line = "=" * min(self.width, 68)
-        print(self.color("\n  YASHI", "magenta") + self.color("  /  PERSONAL AGENT", "bold"))
-        print(self.color("  dynamic tools  |  secure approval flow  |  ready", "dim"))
-        print(self.color(line, "cyan"))
+        width = min(self.width, 68)
+        line = "=" * width
+        print(self.color("\n  +" + line + "+", "cyan"))
+        print(self.color("  |", "cyan") + self.color("  [ YASHI ]  ", "magenta") +
+              self.color("PERSONAL AI AGENT", "bold") + self.color(" " * (width - 29) + "|", "cyan"))
+        print(self.color("  |  dynamic tools  |  secure approvals  |  ready".ljust(width + 2) + "|", "dim"))
+        print(self.color("  +" + line + "+", "cyan"))
         print(self.color("  /tools  active tools     /help  commands     exit  quit", "dim"))
-        print(self.color(line, "cyan"))
 
     def prompt(self):
         label = self.color("you", "green")
-        return input(f"\n{label} {self.color('>', 'bold')} ").strip()
+        return input(f"\n{self.color('>>', 'green')} {label}: ").strip()
 
     def thinking_start(self):
         if self._thinking_stop is not None:
@@ -64,7 +66,7 @@ class Console:
             frames = (".", "..", "...", "....")
             index = 0
             while not stop_event.is_set():
-                print(f"\r{self.color('YASHI is thinking' + frames[index], 'dim')}",
+                print(f"\r  {self.color('YASHI is thinking' + frames[index], 'dim')}",
                       end="", flush=True)
                 index = (index + 1) % len(frames)
                 stop_event.wait(0.25)
@@ -80,24 +82,24 @@ class Console:
         if self._thinking_thread is not None:
             self._thinking_thread.join()
         if self.enabled:
-            print("\r" + (" " * (len("YASHI is thinking....") + 1)) + "\r",
+            print("\r" + (" " * (len("  YASHI is thinking....") + 1)) + "\r",
                   end="", flush=True)
         self._thinking_stop = None
         self._thinking_thread = None
 
     def session_ended(self):
-        print(self.color("\nSession ended.", "dim"))
+        print(self.color("\n  [ session ended ]", "dim"))
 
     def tools_panel(self, tools):
         line = "-" * min(self.width, 68)
-        print(f"\n{self.color('ACTIVE TOOLS', 'cyan')} {self.color(f'{len(tools)} loaded', 'dim')}")
-        print(self.color("+" + line + "+", "dim"))
+        print(f"\n{self.color('[ ACTIVE TOOLS ]', 'cyan')} {self.color(f'{len(tools)} loaded', 'dim')}")
+        print(self.color(line, "dim"))
         for schema in tools:
             name = schema.get("name", "unknown")
             description = schema.get("description", "No description")
             available = self._fit(f"{name}  -  {description}")
-            print(f"| {self.color(available, 'bold')} |")
-        print(self.color("+" + line + "+", "dim"))
+            print(f"  {self.color('*', 'cyan')} {self.color(available, 'bold')}")
+        print(self.color(line, "dim"))
 
     def tool_start(self, name, arguments):
         if name == "create_and_register_tool":
@@ -111,9 +113,9 @@ class Console:
             if len(compact) > 120:
                 compact = compact[:117] + "..."
             status = "running..."
-        print(f"\n{self.color('  TOOL', 'cyan')} {self.color(name, 'bold')}")
-        print(f"  {self.color(compact, 'dim')}")
-        print(f"  {self.color(status, 'dim')}")
+        print(f"\n{self.color('[ TOOL ]', 'cyan')} {self.color(name, 'bold')}")
+        print(f"  {self.color('input', 'dim')}  {compact}")
+        print(f"  {self.color('status', 'dim')} {status}")
 
     def tool_result(self, result):
         output = result.strip() if isinstance(result, str) else str(result)
@@ -133,32 +135,33 @@ class Console:
                     output = str(data["error"])
         if len(output) > 600:
             output = output[:597] + "..."
-        print(f"  {self.color('done', 'green')} {output}")
+        print(f"  {self.color('[ done ]', 'green')} {output}")
 
     def assistant(self, message):
-        print(f"\n{self.color('AGENT', 'blue')} {self.color('response', 'dim')}")
+        print(f"\n{self.color('[ YASHI ]', 'blue')} {self.color('response', 'dim')}")
         for paragraph in message.splitlines() or [message]:
             if paragraph:
                 print(textwrap.fill(paragraph, width=max(self.width - 4, 40),
-                                    initial_indent="  ",
-                                    subsequent_indent="  "))
+                                    initial_indent="  | ",
+                                    subsequent_indent="  | "))
             else:
-                print()
+                print(self.color("  |", "blue"))
+        print(self.color("  +--", "blue"))
 
     def approval(self, message):
-        print(f"\n{self.color('APPROVAL REQUIRED', 'yellow')}")
-        print(textwrap.indent(message, "  "))
-        answer = input(f"  {self.color('Allow?', 'yellow')} [y/N] ").strip().lower()
+        print(f"\n{self.color('[ APPROVAL REQUIRED ]', 'yellow')}")
+        print(textwrap.indent(message, "  | "))
+        answer = input(f"  {self.color('Allow?', 'yellow')} [y/N]: ").strip().lower()
         granted = answer in {"y", "yes"}
         status = "approved" if granted else "denied"
-        print(f"  {self.color(status, 'green' if granted else 'red')}")
+        print(f"  {self.color('[ ' + status + ' ]', 'green' if granted else 'red')}")
         return granted
 
     def error(self, message):
-        print(f"{self.color('Error:', 'red')} {message}")
+        print(f"\n{self.color('[ ERROR ]', 'red')} {message}")
 
     def help_panel(self):
-        print(f"\n{self.color('COMMANDS', 'cyan')}")
+        print(f"\n{self.color('[ COMMANDS ]', 'cyan')}")
         print("  /tools   Show active tools")
         print("  /help    Show this panel")
         print("  exit     End the session")
