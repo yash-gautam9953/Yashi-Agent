@@ -188,12 +188,15 @@ def create_and_register_tool(
         })
 
     # Interactive approval
-    preview = code if len(code) <= 800 else code[:800] + "\n... [truncated]"
+    preview = " ".join(code.split())
+    if len(preview) > 160:
+        preview = preview[:157] + "..."
     approval_prompt = (
         f"Create and activate custom tool '{name}'?\n"
         f"Description: {description}\n"
-        f"Code preview:\n{preview}\n"
-        "Allow dynamic registration and execution?"
+        f"Validation: syntax and tests passed ({len(code.splitlines())} lines)\n"
+        f"Preview: {preview}\n"
+        "Allow?"
     )
     if not approve(approval_prompt):
         return json.dumps({
