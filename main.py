@@ -1,182 +1,209 @@
-import json
-import os
-import sys
-from functools import partial
 from pathlib import Path
-
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from tools.custom_tool_manager import (
-    create_and_register_tool,
-    load_custom_tools,
-    validate_tool_name,
-)
+from agent.orchestrator import AgentOrchestrator
+from agent.tool_builder import create_tool_builder_handler
+from llm.client import AzureOpenAIClient
+from memory.session_store import SessionStore
+from tools.registry import ToolRegistry
 from ui.console import console
-
 
 load_dotenv()
 
 WORKSPACE = Path(__file__).parent.resolve()
 MAX_TOOL_ROUNDS = 12
 
-endpoint = os.getenv(
-    "AZURE_OPENAI_ENDPOINT",
-    "https://samjho-ai.services.ai.azure.com/openai/v1",
-)
-deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.6-terra")
-api_key = os.getenv("AZURE_OPENAI_API_KEY")
-if not api_key:
-    raise RuntimeError("AZURE_OPENAI_API_KEY is not set in .env")
 
-client = OpenAI(base_url=endpoint, api_key=api_key)
+def build_application(workspace: Path = WORKSPACE):
+    """Wire application components together."""
+    session_store = SessionStore(workspace / "sessions")
+    registry = ToolRegistry()
+    registry.load_base_tools(workspace / "tools.json")
 
-tools = json.loads((WORKSPACE / "tools.json").read_text(encoding="utf-8"))
-tool_functions = {}
+    tool_builder_handler = create_tool_builder_handler(
+        workspace,
+        console.approval,
+        registry.register_custom_tool,
+        {"create_and_register_tool"},
+        on_progress=console.step,
+    )
+    registry.bind_function("create_and_register_tool", tool_builder_handler)
+    registry.load_custom_tools(workspace)
 
-
-def approve(message):
-    return console.approval(message)
-
-
-def dynamic_register(name, schema, function):
-    tool_functions[name] = function
-    tools[:] = [tool for tool in tools if tool.get("name") != name]
-    tools.append(schema)
-
-
-def register_custom_tool(name, schema, function):
-    validate_tool_name(name, {"create_and_register_tool"})
-    dynamic_register(name, schema, function)
+    llm_client = AzureOpenAIClient()
+    orchestrator = AgentOrchestrator(
+        llm_client=llm_client,
+        registry=registry,
+        console=console,
+        max_tool_rounds=MAX_TOOL_ROUNDS,
+        session_store=session_store,
+    )
+    return registry, orchestrator
 
 
-def show_tools():
-    console.tools_panel(tools)
-
-
-tool_functions["create_and_register_tool"] = partial(
-    create_and_register_tool,
-    WORKSPACE,
-    approve,
-    register_custom_tool,
-    {"create_and_register_tool"},
-)
-
-load_custom_tools(WORKSPACE, tool_functions, tools)
-
-AGENT_INSTRUCTIONS = (
-    "You are a dynamic personal assistant. The only initially available tool "
-    "is create_and_register_tool. If the user's request needs any other "
-    "capability, create a narrowly scoped Python tool with a JSON schema and "
-    "test_code. Ask for approval through the tool. After it returns registered, "
-    "call the new tool in the next step to complete the user's request. "
-    "For harmless underspecified requests, make a sensible minimal assumption "
-    "instead of asking a clarification question: for 'create a Python file "
-    "with some Python code', use example.py with a small runnable example and "
-    "tell the user what assumption you made. "
-    "Never pretend a task is complete before observing the tool result. "
-    "Never create credential theft, secret exfiltration, security bypass, or "
-    "destructive operating-system tools."
-)
-
-
-def ask_llm(user_input, previous_response_id=None):
-    request = {
-        "model": deployment_name,
-        "instructions": AGENT_INSTRUCTIONS,
-        "input": user_input,
-        "tools": tools,
-    }
-    if previous_response_id:
-        request["previous_response_id"] = previous_response_id
-    console.thinking_start()
-    try:
-        return client.responses.create(**request)
-    finally:
-        console.thinking_stop()
-
-
-def run_task(user_input, previous_response_id=None):
-    response = ask_llm(user_input, previous_response_id)
-
-    for _ in range(MAX_TOOL_ROUNDS):
-        outputs = []
-
-        for item in response.output:
-            if item.type != "function_call":
-                continue
-
-            arguments = json.loads(item.arguments)
-            console.tool_start(item.name, arguments)
-
-            try:
-                function = tool_functions[item.name]
-                result = function(**arguments)
-            except Exception as error:
-                result = f"Tool error: {error}"
-
-            if isinstance(result, (dict, list)):
-                result_for_model = json.dumps(result, ensure_ascii=True)
-            else:
-                result_for_model = str(result)
-
-            console.tool_result(result_for_model)
-            outputs.append({
-                "type": "function_call_output",
-                "call_id": item.call_id,
-                "output": result_for_model,
-            })
-
-        if not outputs:
-            if response.output_text:
-                console.assistant(response.output_text)
-            return response.id
-
-        console.thinking_start()
-        try:
-            response = client.responses.create(
-                model=deployment_name,
-                instructions=(
-                    "Use the newly registered tool if it is available. "
-                    "Then give a concise final answer based on the observed result."
-                ),
-                previous_response_id=response.id,
-                input=outputs,
-                tools=tools,
-            )
-        finally:
-            console.thinking_stop()
-
-    console.error("Maximum tool rounds reached.")
-    return response.id
-
-
-console.banner()
-print(console.color("  Only create_and_register_tool is active initially.", "dim"))
-print(console.color("  Type 'help' for usage or 'exit' to stop.", "dim"))
-
-session_response_id = None
-while True:
-    try:
-        user_input = console.prompt()
-    except (EOFError, KeyboardInterrupt):
-        console.session_ended()
-        break
-
-    if not user_input:
-        continue
-    if user_input.lower() in {"exit", "quit", "q"}:
-        console.session_ended()
-        break
-    if user_input.lower() in {"/tools", "tools"}:
-        show_tools()
-        continue
-    if user_input.lower() in {"/help", "help"}:
-        console.help_panel()
-        print("\n  Ask for any capability. The agent will propose, test, approve, and use a tool.")
-        continue
+def main():
+    console.banner()
+    print(console.color("  Only create_and_register_tool is active initially.", "dim"))
+    print(console.color("  Type 'help' for usage or 'exit' to stop.", "dim"))
 
     try:
-        session_response_id = run_task(user_input, session_response_id)
+        registry, orchestrator = build_application()
     except Exception as error:
-        console.error(str(error))
+        console.error(f"Initialization error: {error}")
+        return
+
+    session_store = getattr(orchestrator, "session_store", None)
+    session_response_id = session_store.response_id if session_store else None
+
+    history_file = WORKSPACE / "sessions" / ".history"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        try:
+            user_input = console.prompt(history_file=str(history_file))
+        except (EOFError, KeyboardInterrupt):
+            console.session_ended()
+            break
+
+        if not user_input:
+            continue
+        parts = user_input.strip().split()
+        cmd = parts[0].lower()
+        args = parts[1:]
+
+        if cmd in {"exit", "quit", "q"}:
+            console.session_ended()
+            break
+
+        if cmd in {"/tools", "tools"}:
+            if args:
+                tool_name = args[0]
+                manifest = registry.manifests.get(tool_name)
+                if manifest:
+                    console.tool_details_panel(manifest.to_dict())
+                else:
+                    console.error(f"Tool '{tool_name}' not found.")
+            else:
+                console.tools_panel(registry.all_schemas, registry.manifests)
+            continue
+
+        if cmd == "/disable":
+            if not args:
+                console.error("Usage: /disable <tool_name>")
+            else:
+                tool_name = args[0]
+                if registry.disable_tool(tool_name, WORKSPACE):
+                    print(console.color(f"  Tool '{tool_name}' has been disabled.", "yellow"))
+                else:
+                    console.error(f"Failed to disable tool '{tool_name}'. Tool not found or cannot be disabled.")
+            continue
+
+        if cmd == "/enable":
+            if not args:
+                console.error("Usage: /enable <tool_name>")
+            else:
+                tool_name = args[0]
+                if registry.enable_tool(tool_name, WORKSPACE):
+                    print(console.color(f"  Tool '{tool_name}' has been enabled.", "green"))
+                else:
+                    console.error(f"Failed to enable tool '{tool_name}'. Tool not found.")
+            continue
+
+        if cmd == "/delete":
+            if not args:
+                console.error("Usage: /delete <tool_name>")
+            else:
+                tool_name = args[0]
+                if tool_name not in registry.manifests:
+                    console.error(f"Tool '{tool_name}' not found.")
+                elif tool_name == "create_and_register_tool":
+                    console.error("Cannot delete core system tool 'create_and_register_tool'.")
+                else:
+                    confirmed = console.confirm(f"Are you sure you want to permanently delete tool '{tool_name}'?")
+                    if confirmed:
+                        if registry.delete_tool(tool_name, WORKSPACE):
+                            print(console.color(f"  Tool '{tool_name}' and its file have been permanently deleted.", "red"))
+                        else:
+                            console.error(f"Failed to delete tool '{tool_name}'.")
+                    else:
+                        print(console.color("  Deletion cancelled.", "dim"))
+            continue
+
+        if cmd == "/tool-history":
+            if not args:
+                console.error("Usage: /tool-history <tool_name>")
+            else:
+                tool_name = args[0]
+                manifest = registry.manifests.get(tool_name)
+                if not manifest:
+                    console.error(f"Tool '{tool_name}' not found.")
+                else:
+                    console.tool_history_panel(tool_name, manifest.history, manifest.version)
+            continue
+
+        if cmd in {"/history", "history"}:
+            if session_store:
+                console.history_panel(session_store.get_messages(), session_store.get_tool_calls())
+            else:
+                console.error("Session store is not initialized.")
+            continue
+
+        if cmd in {"/new", "new"}:
+            if session_store:
+                new_sess = session_store.new_session()
+                session_response_id = None
+                print(console.color(f"  Started fresh session: {new_sess.session_id}", "green"))
+            else:
+                console.error("Session store is not initialized.")
+            continue
+
+        if cmd in {"/sessions", "sessions"}:
+            if session_store:
+                if args:
+                    target_id = args[0]
+                    loaded = session_store.load_session(target_id)
+                    if loaded:
+                        session_response_id = loaded.response_id
+                        print(console.color(f"  Loaded session: {target_id} ({len(loaded.messages)} messages)", "green"))
+                    else:
+                        console.error(f"Session '{target_id}' not found.")
+                else:
+                    console.sessions_panel(session_store.list_sessions(), active_session_id=session_store.active_session_id)
+            else:
+                console.error("Session store is not initialized.")
+            continue
+
+        if cmd in {"/clear-history", "clear-history"}:
+            if session_store:
+                confirmed = console.confirm("Are you sure you want to clear the active session history?")
+                if confirmed:
+                    session_store.clear()
+                    session_response_id = None
+                    print(console.color("  Active session history cleared and reset.", "yellow"))
+                else:
+                    print(console.color("  Clear history cancelled.", "dim"))
+            else:
+                console.error("Session store is not initialized.")
+            continue
+
+        if cmd in {"/command-history", "command-history"}:
+            print(f"\n{console.color('[ COMMAND HISTORY ]', 'cyan')} {console.color(f'{len(console.command_history)} items', 'dim')}")
+            for idx, item in enumerate(console.command_history[-20:], 1):
+                print(f"  {idx}. {item}")
+            continue
+
+        if cmd in {"/help", "help"}:
+            console.help_panel()
+            print("\n  Ask for any capability. The agent will propose, test, approve, and use a tool.")
+            continue
+
+        try:
+            session_response_id = orchestrator.run_task(user_input, session_response_id)
+        except KeyboardInterrupt:
+            console.interrupted()
+        except Exception as error:
+            console.error(str(error))
+
+
+if __name__ == "__main__":
+    main()

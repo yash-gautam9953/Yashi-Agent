@@ -1,11 +1,15 @@
 import ast
+import hashlib
 import importlib.util
 import json
 import re
-import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
+
+from security.inspector import SecurityInspector
+from tools.sandbox import ToolSandbox
 
 Approval = Callable[[str], bool]
 RegisterCallback = Callable[[str, dict, Callable], None]
@@ -37,26 +41,12 @@ def validate_tool_code(name: str, code: str) -> None:
 
 
 def test_tool_code(code: str, test_code: str = "") -> tuple[bool, str]:
-    script = code + "\n\n"
-    if test_code and test_code.strip():
-        script += "# Test execution\n" + test_code + "\n"
-    else:
-        script += "# Basic compilation check\n"
-
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if proc.returncode != 0:
-            return False, proc.stderr.strip() or proc.stdout.strip()
-        return True, proc.stdout.strip()
-    except subprocess.TimeoutExpired:
-        return False, "Tool test timed out after 10 seconds"
-    except Exception as error:
-        return False, str(error)
+    """Execute tool tests inside the isolated ToolSandbox."""
+    sandbox = ToolSandbox()
+    result = sandbox.run_test(code, test_code)
+    if not result["success"]:
+        return False, result["error"] or result["stderr"]
+    return True, result["stdout"]
 
 
 def import_custom_tool(workspace: Path, name: str) -> Callable[..., Any]:
@@ -111,6 +101,8 @@ def load_custom_tools(
     for name, item in registry.items():
         if not isinstance(item, dict):
             continue
+        if item.get("enabled") is False:
+            continue
         schema = item.get("schema")
         if not schema or not isinstance(schema, dict):
             continue
@@ -148,6 +140,17 @@ def reload_tools(
     })
 
 
+_default_correction_manager = None
+
+
+def get_default_correction_manager():
+    global _default_correction_manager
+    if _default_correction_manager is None:
+        from agent.correction import SelfCorrectionManager
+        _default_correction_manager = SelfCorrectionManager()
+    return _default_correction_manager
+
+
 def create_and_register_tool(
     workspace: Path,
     approve: Approval,
@@ -158,7 +161,13 @@ def create_and_register_tool(
     parameters: dict | str,
     code: str,
     test_code: str = "",
+    correction_manager: Optional[Any] = None,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> str:
+    from agent.correction import AttemptRecord, analyze_failure, sanitize_error
+    if correction_manager is None:
+        correction_manager = get_default_correction_manager()
+
     validate_tool_name(name, core_tools)
     if not description or not description.strip():
         raise ValueError("Description cannot be empty")
@@ -175,38 +184,171 @@ def create_and_register_tool(
     parameters.setdefault("type", "object")
     parameters.setdefault("properties", {})
 
+    # Guard against infinite retry loops
+    if correction_manager.has_exceeded_attempts(name):
+        last_history = correction_manager.get_history(name)
+        last_err = last_history[-1].error_message if last_history else "Max attempts reached"
+        payload = correction_manager.create_failure_payload(
+            name,
+            last_err,
+            correction_manager.max_attempts,
+        )
+        return json.dumps(payload)
+
+    attempt_number = correction_manager.get_attempt_count(name) + 1
+    code_hash = hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
+
+    # 1. Duplicate detection against existing tools
+    if callable(on_progress):
+        on_progress("Checking available tools")
+
+    from tools.registry import ToolManifest, ToolRegistry
+
+    reg_data = _load_custom_tools_registry(workspace)
+    temp_registry = ToolRegistry()
+    for reg_name, item in reg_data.items():
+        if isinstance(item, dict):
+            temp_registry._manifests[reg_name] = ToolManifest.from_dict(item)
+
+    dup = temp_registry.find_duplicate(name, description)
+    if dup and dup.get("tool") != name:
+        return json.dumps({
+            "ok": False,
+            "status": "duplicate_found",
+            "name": name,
+            "existing_tool": dup["tool"],
+            "message": (
+                f"A suitable existing tool '{dup['tool']}' already exists: {dup['reason']} "
+                f"Reusing existing tool '{dup['tool']}' instead of generating a duplicate."
+            ),
+            "suggestion": f"Call existing tool '{dup['tool']}' directly.",
+            "details": dup,
+        })
+
+    # 2. Creating tool & Static AST Security Inspection (NEVER BYPASSED ON RETRIES)
+    if callable(on_progress):
+        on_progress("Creating tool")
+
+    if callable(on_progress):
+        on_progress("Security inspection")
+
+    inspector = SecurityInspector()
+    report = inspector.analyze_tool(
+        name=name,
+        description=description,
+        code=code,
+        test_code=test_code,
+        target_file=f"custom_tools/{name}.py",
+    )
+
+    if not report.is_safe:
+        record = AttemptRecord(
+            attempt_number=attempt_number,
+            tool_name=name,
+            code=code,
+            test_code=test_code,
+            code_hash=code_hash,
+            status="security_violation",
+            approved=False,
+            security_safe=False,
+            security_violations=report.violations,
+            error_type="SecurityViolation",
+            error_message=f"Security violation detected: {'; '.join(report.violations)}",
+            analysis="Code attempted blocked modules or dangerous capabilities.",
+        )
+        correction_manager.record_attempt(record)
+
+        return json.dumps({
+            "ok": False,
+            "status": "security_violation",
+            "name": name,
+            "attempt": attempt_number,
+            "max_attempts": correction_manager.max_attempts,
+            "error": f"Security violation detected: {'; '.join(report.violations)}",
+            "violations": report.violations,
+        })
+
     validate_tool_code(name, code)
 
-    # Isolated test verification before asking user approval
-    test_passed, test_msg = test_tool_code(code, test_code)
-    if not test_passed:
-        return json.dumps({
-            "ok": False,
-            "status": "test_failed",
-            "name": name,
-            "error": f"Tool test verification failed:\n{test_msg}",
-        })
+    # 3. Interactive user authorization (If code materially changes, require approval again)
+    reapproval_required = correction_manager.is_reapproval_required(name, code)
+    if reapproval_required:
+        if callable(on_progress):
+            on_progress("Waiting for approval")
 
-    # Interactive approval
-    preview = " ".join(code.split())
-    if len(preview) > 160:
-        preview = preview[:157] + "..."
-    approval_prompt = (
-        f"Create and activate custom tool '{name}'?\n"
-        f"Description: {description}\n"
-        f"Validation: syntax and tests passed ({len(code.splitlines())} lines)\n"
-        f"Preview: {preview}\n"
-        "Allow?"
+        if not approve(report):
+            record = AttemptRecord(
+                attempt_number=attempt_number,
+                tool_name=name,
+                code=code,
+                test_code=test_code,
+                code_hash=code_hash,
+                status="denied",
+                approved=False,
+                security_safe=True,
+                error_type="UserDenied",
+                error_message="User denied tool creation",
+            )
+            correction_manager.record_attempt(record)
+            return json.dumps({
+                "ok": False,
+                "status": "denied",
+                "name": name,
+                "attempt": attempt_number,
+                "message": "User denied tool creation",
+            })
+        correction_manager.record_approved_code(name, code)
+
+    # 4. Isolated Sandbox Test Execution (Only runs AFTER approval and inside sandbox)
+    if callable(on_progress):
+        on_progress("Testing")
+
+    sandbox = ToolSandbox(inspector=inspector)
+    test_result = sandbox.run_test(code, test_code)
+    duration = test_result.get("duration", 0.0)
+
+    if not test_result["success"]:
+        raw_error = test_result.get("error") or test_result.get("stderr") or "Tool test failed"
+        sanitized_error = sanitize_error(raw_error)
+        analysis = analyze_failure(sanitized_error)
+
+        record = AttemptRecord(
+            attempt_number=attempt_number,
+            tool_name=name,
+            code=code,
+            test_code=test_code,
+            code_hash=code_hash,
+            status="test_failed",
+            approved=True,
+            security_safe=True,
+            error_type=analysis["error_type"],
+            error_message=sanitized_error,
+            analysis=analysis["diagnosis"],
+            duration=duration,
+        )
+        correction_manager.record_attempt(record)
+
+        payload = correction_manager.create_failure_payload(name, raw_error, attempt_number)
+        return json.dumps(payload)
+
+    # 5. Success! Record attempt, persist to disk, and update registry manifest
+    if callable(on_progress):
+        on_progress("Registering")
+
+    record = AttemptRecord(
+        attempt_number=attempt_number,
+        tool_name=name,
+        code=code,
+        test_code=test_code,
+        code_hash=code_hash,
+        status="registered",
+        approved=True,
+        security_safe=True,
+        duration=duration,
     )
-    if not approve(approval_prompt):
-        return json.dumps({
-            "ok": False,
-            "status": "denied",
-            "name": name,
-            "message": "User denied tool creation",
-        })
+    correction_manager.record_attempt(record)
 
-    # Save to disk
+    # 5. Save to disk and update registry manifest
     custom_tools_dir = workspace / "custom_tools"
     custom_tools_dir.mkdir(parents=True, exist_ok=True)
     init_py = custom_tools_dir / "__init__.py"
@@ -223,13 +365,49 @@ def create_and_register_tool(
         "parameters": parameters,
     }
 
-    registry = _load_custom_tools_registry(workspace)
-    registry[name] = {
-        "schema": schema,
+    now = datetime.now(timezone.utc).isoformat()
+    created_at = now
+    version = "1.0.0"
+    history = []
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
+
+    if name in reg_data and isinstance(reg_data[name], dict):
+        existing = reg_data[name]
+        created_at = existing.get("created_at", now)
+        old_version = existing.get("version", "1.0.0")
+        history = list(existing.get("history", []))
+        history.append({
+            "version": old_version,
+            "updated_at": existing.get("updated_at", now),
+            "checksum": existing.get("checksum", ""),
+            "description": existing.get("description", description),
+        })
+        parts = old_version.split(".")
+        if len(parts) == 3 and parts[1].isdigit():
+            version = f"{parts[0]}.{int(parts[1]) + 1}.0"
+        else:
+            version = f"{old_version}.1"
+
+    manifest_dict = {
+        "name": name,
+        "version": version,
+        "description": description,
         "file": f"{name}.py",
         "function_name": name,
+        "author": "agent",
+        "dependencies": report.detected_imports if report else [],
+        "permissions": [k for k, v in report.permissions.items() if "[+]" in v] if report else [],
+        "risk_level": report.risk_level.lower() if report else "low",
+        "enabled": True,
+        "status": "approved",
+        "created_at": created_at,
+        "updated_at": now,
+        "checksum": code_hash,
+        "history": history,
+        "schema": schema,
     }
-    _save_custom_tools_registry(workspace, registry)
+    reg_data[name] = manifest_dict
+    _save_custom_tools_registry(workspace, reg_data)
 
     # Dynamic import and hot-registration
     func = import_custom_tool(workspace, name)
@@ -239,8 +417,9 @@ def create_and_register_tool(
         "ok": True,
         "status": "registered",
         "name": name,
+        "attempts_used": attempt_number,
         "message": (
-            f"Tool '{name}' created, verified, and hot-registered successfully! "
+            f"Tool '{name}' created, verified, and hot-registered successfully on attempt {attempt_number}! "
             f"You can now call '{name}' in your next step."
         ),
     })
